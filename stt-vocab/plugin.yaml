@@ -1,0 +1,28 @@
+name: stt-vocab
+version: "1.0.0"
+description: "Adds the names a speech-to-text model mis-hears (your terms, plus names from this profile's memory for local Whisper) to the transcription prompt. One pre_transcription hook; no tools, network, subprocesses or writes."
+author: pierrenode
+requires_hermes: ">=0.21"
+provides_hooks:
+  - pre_transcription
+config_schema:
+  terms:
+    type: list
+    default: []
+    description: "Terms added to every transcription prompt (names, products, jargon)."
+  source_terms:
+    type: dict
+    default: {}
+    description: "Extra terms per caller surface, e.g. {gateway: [...], voice_mode: [...]}; these come first."
+  from_memory:
+    type: bool
+    default: true
+    description: "Also add names found in this profile's memories/USER.md and MEMORY.md."
+  allow_remote:
+    type: bool
+    default: false
+    description: "Send memory-derived names to cloud STT providers too (they are uploaded with the audio). Off: only to local faster-whisper or local_command."
+  max_chars:
+    type: int
+    default: 896
+    description: "Longest prompt the plugin will build (896 = what Hermes keeps for Whisper-family backends)."

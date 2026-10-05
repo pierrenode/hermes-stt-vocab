@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  schedule:
+    # Daily: catch a Hermes main change to the pre_transcription seam or
+    # to how the transcription request is built.
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: unit (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install "pytest>=8,<9"
+      - run: python -m pytest tests/test_terms.py tests/test_plugin.py -q
+
+  hermes:
+    name: hermes ${{ matrix.hermes }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # requires_hermes floor: 0.21.0
+          - hermes: v2026.8.31
+            python: "3.11"
+            sync: uv sync --frozen --python 3.11 --extra dev
+          - hermes: main
+            python: "3.14"
+            sync: uv sync --locked --python 3.14 --group dev
+    runs-on: ubuntu-latest
+    env:
+      HERMES: ${{ github.workspace }}/hermes-agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: NousResearch/hermes-agent
+          ref: ${{ matrix.hermes }}
+          path: hermes-agent
+      - uses: astral-sh/setup-uv@v6
+      - name: Install Hermes ${{ matrix.hermes }}
+        working-directory: hermes-agent
+        run: ${{ matrix.sync }}
+      - name: Tests against Hermes
+        run: |
+          export PYTHONPATH="$HERMES" HERMES_HOME="$RUNNER_TEMP/hermes-home"
+          "$HERMES/.venv/bin/python" -m pytest tests -q -p no:cacheprovider
+      - name: Plugin validation
+        run: |
+          export HERMES_HOME="$RUNNER_TEMP/validate-home"
+          cd "$HERMES"
+          if [ "${{ matrix.hermes }}" = "main" ]; then
+            .venv/bin/python -m hermes_cli.main plugins validate "$GITHUB_WORKSPACE/stt-vocab"
+          else
+            # 0.21.0 predates `plugins validate`; `plugins doctor` is its manifest/load check.
+            .venv/bin/python -m hermes_cli.main plugins doctor "$GITHUB_WORKSPACE/stt-vocab"
+          fi
