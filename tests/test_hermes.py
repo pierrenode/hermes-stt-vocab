@@ -18,7 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from conftest import MEMORY_MD, PLUGIN_DIR, USER_MD
+from conftest import MEMORY_MD, NOTES_BY_LANGUAGE, PLUGIN_DIR, USER_MD
 
 pytest.importorskip("tools.transcription_tools", reason="needs Hermes importable")
 
@@ -106,11 +106,12 @@ def _run(home, script: str, *args: str) -> dict:
     return json.loads(proc.stdout.strip().splitlines()[-1])
 
 
-def _home(tmp_path, *, enabled=True, base_url=None, stt_prompt=None, **settings):
+def _home(tmp_path, *, enabled=True, base_url=None, stt_prompt=None, user_md=USER_MD, memory_md=MEMORY_MD,
+          **settings):
     home = tmp_path / "home"
     (home / "memories").mkdir(parents=True)
-    (home / "memories" / "USER.md").write_text(USER_MD, encoding="utf-8", newline="\n")
-    (home / "memories" / "MEMORY.md").write_text(MEMORY_MD, encoding="utf-8", newline="\n")
+    (home / "memories" / "USER.md").write_text(user_md, encoding="utf-8", newline="\n")
+    (home / "memories" / "MEMORY.md").write_text(memory_md, encoding="utf-8", newline="\n")
     if enabled:
         shutil.copytree(PLUGIN_DIR, home / "plugins" / "stt-vocab")
         _cli(home, "plugins", "enable", "stt-vocab")
@@ -176,3 +177,14 @@ def test_local_backend_gets_names_from_this_profiles_memory(tmp_path):
     for name in ("Ayşe Demir", "Northwind", "Project Atlas", "Bartholomew", "Siobhan O'Leary", "gRPC"):
         assert name in prompt, (name, prompt)
     assert _run(home, _HOOK_STEP, _wav(tmp_path), "openai")["prompt"] is None
+
+
+def test_languages_set_with_the_cli_reach_the_hook(tmp_path):
+    notes = "\n§\n".join(NOTES_BY_LANGUAGE["tr"])
+    plain = _run(_home(tmp_path / "plain", user_md=notes, memory_md=""), _HOOK_STEP, _wav(tmp_path), "local")
+    assert "Kullanıcı Northwind" in plain["prompt"]
+    home = _home(tmp_path / "tr", user_md=notes, memory_md="", languages='["tr"]')
+    prompt = _run(home, _HOOK_STEP, _wav(tmp_path), "local")["prompt"]
+    for name in ("Northwind", "Bartholomew", "Project Atlas", "Priya Raman", "İstanbul"):
+        assert name in prompt, (name, prompt)
+    assert "Kullanıcı" not in prompt and "Sonra" not in prompt and "'da" not in prompt

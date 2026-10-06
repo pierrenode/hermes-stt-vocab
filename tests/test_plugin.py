@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import MEMORY_MD, PLUGIN_DIR, USER_MD, FakeCtx
+from conftest import MEMORY_MD, NOTES_BY_LANGUAGE, PLUGIN_DIR, USER_MD, FakeCtx
 
 HOOK = "pre_transcription"
 
@@ -88,7 +88,8 @@ def test_max_chars_caps_the_prompt(plugin):
 @pytest.mark.parametrize("settings", [
     {"terms": "Atlas"}, {"terms": [1, 2]}, {"source_terms": ["Atlas"]}, {"source_terms": {"gateway": "Atlas"}},
     {"from_memory": "yes"}, {"allow_remote": 1}, {"max_chars": 0}, {"max_chars": 4001},
-    {"max_chars": "896"}, {"max_chars": True},
+    {"max_chars": "896"}, {"max_chars": True}, {"languages": "tr"}, {"languages": ["tr", "xx"]},
+    {"languages": [1]},
 ])
 def test_an_unusable_setting_leaves_the_prompt_unchanged_and_says_so_once(plugin, caplog, settings):
     with caplog.at_level(logging.WARNING):
@@ -96,6 +97,15 @@ def test_an_unusable_setting_leaves_the_prompt_unchanged_and_says_so_once(plugin
         assert _call(plugin, **settings) is None
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1 and "leaving the transcription prompt unchanged" in warnings[0].getMessage()
+
+
+def test_languages_shape_the_memory_names(plugin, monkeypatch):
+    monkeypatch.setattr(plugin, "_memory_entries", lambda: list(NOTES_BY_LANGUAGE["tr"]))
+    without = _call(plugin, provider="local")["prompt"]
+    assert "Kullanıcı Northwind" in without
+    for languages in (["tr"], ["TR", "en"]):
+        out = _call(plugin, provider="local", languages=languages)["prompt"]
+        assert "Northwind" in out and "Kullanıcı" not in out and "Sonra" not in out, out
 
 
 def test_null_lists_are_treated_as_empty(plugin):

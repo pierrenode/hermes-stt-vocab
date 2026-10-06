@@ -12,6 +12,8 @@ those spellings. The list is built from, most important first:
    faster-whisper or ``local_command``) unless ``allow_remote`` is set, because the prompt is
    uploaded with the audio.
 
+Names are found with English rules; ``languages`` (``de``, ``es``, ``fr``, ``it``, ``nl``, ``pt``,
+``tr``) adds the function words and month names of the languages the notes are written in.
 Terms already in ``stt.prompt`` are skipped, and the result stays within ``max_chars`` (896 by
 default, the length Hermes keeps for Whisper-family backends), so Hermes never has to truncate
 it. Settings and memory files are read on every transcription. A setting the plugin cannot use
@@ -24,7 +26,7 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
-from .terms import build_prompt, extract_terms
+from .terms import SUPPORTED_LANGUAGES, build_prompt, extract_terms
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +65,15 @@ def _bool(value: Any, name: str) -> bool:
     return value
 
 
+def _languages(value: Any) -> list[str]:
+    codes = _terms_list(value, "languages")
+    known = ("en", *SUPPORTED_LANGUAGES)
+    unknown = [c for c in codes if c.lower() not in known]
+    if unknown:
+        raise _Unusable(f"languages must be codes from {', '.join(known)}, got {unknown!r}")
+    return [c.lower() for c in codes if c.lower() != "en"]
+
+
 def _settings(ctx) -> dict:
     max_chars = ctx.get_config("max_chars", DEFAULT_MAX_CHARS)
     if isinstance(max_chars, bool) or not isinstance(max_chars, int) or not 1 <= max_chars <= MAX_CHARS_CEILING:
@@ -78,6 +89,7 @@ def _settings(ctx) -> dict:
         "from_memory": _bool(ctx.get_config("from_memory", True), "from_memory"),
         "allow_remote": _bool(ctx.get_config("allow_remote", False), "allow_remote"),
         "max_chars": max_chars,
+        "languages": _languages(ctx.get_config("languages", [])),
     }
 
 
@@ -110,7 +122,7 @@ def make_hook(ctx):
             return None
         groups = [settings["source_terms"].get(source or "", []), settings["terms"]]
         if settings["from_memory"] and (settings["allow_remote"] or provider in LOCAL_PROVIDERS):
-            groups.append(extract_terms(_memory_entries()))
+            groups.append(extract_terms(_memory_entries(), settings["languages"]))
         new_prompt = build_prompt(prompt, groups, settings["max_chars"])
         return None if new_prompt is None else {"prompt": new_prompt}
 

@@ -10,7 +10,12 @@ mis-hear: names of people, products and projects, acronyms and identifiers. It k
 
 A lone capitalised word at the start of a sentence (``Prefers``, ``Uses``) is kept only when the
 same word also appears capitalised mid-sentence somewhere. URLs, paths, e-mail addresses and
-long strings that look like keys are never kept.
+long strings that look like keys are never kept. A possessive or a suffix written after an
+apostrophe (``Northwind's``, ``İstanbul'da``) is dropped and ends the name.
+
+English function words are always known. ``languages`` adds the function words, note words and
+month and weekday names of other languages (see languages.py), so a capitalised ``Kullanıcı``,
+``Der`` or ``Luego`` is not glued onto the name after it.
 
 ``build_prompt(base, groups, max_chars)`` appends terms to the existing prompt until
 ``max_chars`` is reached. ``groups`` runs from most to least important; the most important terms
@@ -21,7 +26,12 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from functools import lru_cache
 from typing import Iterable, Optional, Sequence
+
+from .languages import CALENDAR as _LANGUAGE_CALENDAR
+from .languages import FUNCTION_WORDS as _FUNCTION_WORDS
+from .languages import SUPPORTED as SUPPORTED_LANGUAGES
 
 _TOKEN = re.compile(r"[^\s,;:()\[\]{}\"“”«»!?<>|=]+")
 _EDGE = ".'’`*_~-"
@@ -44,10 +54,57 @@ _CALENDAR = frozenset({
     "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "january",
     "february", "march", "april", "may", "june", "july", "august", "september", "october",
     "november", "december"})
-_POSSESSIVE = ("'s", "’s")
+# Note-writing words the stop word lists leave out, per language: "user", "then", "now",
+# "today", "yesterday", "tomorrow" and the verbs notes open with ("uses", "prefers", ...).
+_NOTE_WORDS = {
+    "de": ("nutzer", "nutzerin", "benutzer", "benutzerin", "danach", "später", "heute", "gestern",
+           "morgen", "nutzt", "benutzt", "verwendet", "bevorzugt", "mag", "arbeitet", "wohnt",
+           "lebt", "spricht"),
+    "es": ("usuario", "usuaria", "luego", "después", "ahora", "hoy", "ayer", "mañana", "usa",
+           "utiliza", "prefiere", "trabaja", "vive", "habla", "también"),
+    "fr": ("utilisateur", "utilisatrice", "ensuite", "puis", "maintenant", "hier", "demain",
+           "utilise", "préfère", "travaille", "habite", "vit", "parle", "aussi"),
+    "it": ("utente", "poi", "dopo", "ora", "adesso", "oggi", "ieri", "domani", "usa", "utilizza",
+           "preferisce", "lavora", "vive", "parla", "anche"),
+    "nl": ("gebruiker", "gebruikster", "daarna", "later", "vandaag", "gisteren", "morgen",
+           "gebruikt", "werkt", "woont", "spreekt", "ook"),
+    "pt": ("usuário", "usuária", "utilizador", "utilizadora", "depois", "agora", "hoje", "ontem",
+           "amanhã", "usa", "utiliza", "prefere", "trabalha", "mora", "vive", "fala", "também"),
+    "tr": ("kullanıcı", "kullanıcının", "kullanıcıya", "kullanıcıyı", "kullanıcıdan", "sonra",
+           "önce", "şimdi", "bugün", "dün", "yarın", "artık", "genelde", "genellikle", "bazen",
+           "hâlâ"),
+}
+# A suffix after an apostrophe: English possessive "'s", Turkish case endings ("'da", "'nin").
+_APOSTROPHE_SUFFIX = re.compile(r"^(.+?)['’]([^\W\d_]*)$")
 _INNER_DOT = re.compile(r"\w\.\w")
 MAX_RUN = 4
 MAX_TERM_CHARS = 40
+
+
+def _key(word: str) -> str:
+    """Case-insensitive key that also folds Turkish dotted/dotless i (``İçin`` = ``için``)."""
+    return word.lower().replace("\u0307", "").replace("ı", "i")
+
+
+@lru_cache(maxsize=16)
+def _language_words(languages: tuple[str, ...]) -> tuple[frozenset, frozenset]:
+    """``(stop words, calendar words)`` as keys for the chosen languages, English included."""
+    unknown = [code for code in languages if code not in SUPPORTED_LANGUAGES]
+    if unknown:
+        raise ValueError(f"unsupported languages {unknown!r}; supported: {', '.join(SUPPORTED_LANGUAGES)}")
+    stop, calendar = set(), set(_CALENDAR)
+    for code in languages:
+        stop.update(_FUNCTION_WORDS[code], _NOTE_WORDS[code])
+        calendar.update(_LANGUAGE_CALENDAR[code])
+    return frozenset(_key(w) for w in stop), frozenset(_key(w) for w in calendar)
+
+
+def _strip_suffix(word: str) -> tuple[str, bool]:
+    """``word`` without a lowercase suffix after its last apostrophe, and whether one was cut."""
+    match = _APOSTROPHE_SUFFIX.match(word)
+    if match and match.group(2).islower():
+        return match.group(1), True
+    return word, False
 
 
 def _looks_like_secret_or_locator(word: str) -> bool:
@@ -73,7 +130,7 @@ def _shape(word: str) -> Optional[str]:
 def _tokens(entry: str):
     """``(word, sentence_start, breaks_before)`` for each token, with edge punctuation stripped."""
     out = []
-    sentence_start, prev_end, prev_raw = True, 0, ""
+    sentence_start, prev_end, prev_raw, prev_suffixed = True, 0, "", False
     for match in _TOKEN.finditer(entry):
         raw, gap = match.group(0), entry[prev_end:match.start()]
         prev_end = match.end()
@@ -81,14 +138,12 @@ def _tokens(entry: str):
             sentence_start = True
         elif prev_raw.endswith(_SENTENCE_END) and not _INNER_DOT.search(prev_raw.rstrip(".")):
             sentence_start = True
-        word = raw.strip(_EDGE)
-        if word.endswith(_POSSESSIVE):
-            word = word[:-2]
-        breaks_before = bool(gap.strip()) or "\n" in gap or prev_raw.endswith(_SENTENCE_END + _POSSESSIVE)
+        word, suffixed = _strip_suffix(raw.strip(_EDGE))
+        breaks_before = bool(gap.strip()) or "\n" in gap or prev_raw.endswith(_SENTENCE_END) or prev_suffixed
         if word:
             out.append((word, sentence_start, breaks_before))
             sentence_start = False
-        prev_raw = raw
+        prev_raw, prev_suffixed = raw, suffixed
     return out
 
 
@@ -109,33 +164,42 @@ def _runs(entry: str):
         yield run, shapes, initial
 
 
-def extract_terms(entries: Iterable[str]) -> list[str]:
-    """Name-like terms from ``entries``, most frequent first, ties in order of first appearance."""
+def extract_terms(entries: Iterable[str], languages: Sequence[str] = ()) -> list[str]:
+    """Name-like terms from ``entries``, most frequent first, ties in order of first appearance.
+
+    ``languages`` are codes from ``SUPPORTED_LANGUAGES`` whose notes may appear in ``entries``.
+    """
     entries = [e for e in entries if e]
-    lowercase_words = {w.lower() for e in entries for w in re.findall(r"\b[^\W\d_][\w'’-]*", e) if w.islower()}
+    stop_words, calendar = _language_words(tuple(sorted(set(languages))))
+    lowercase_words = {_key(w) for e in entries for w in re.findall(r"\b[^\W\d_][\w'’-]*", e) if w.islower()}
+
+    def leading(word: str, shape: str) -> bool:
+        # A language's function word is dropped only in its plain capitalised form, so "USA"
+        # stays a name when Spanish or Italian ("usa") is on.
+        return word.lower() in _LEADING_STOPWORDS or (shape == "cap" and _key(word) in stop_words)
 
     def ordinary(word: str) -> bool:
-        key = word.lower()
+        key = _key(word)
         return key in _LEADING_STOPWORDS or key in _COMMON_STARTERS or key in lowercase_words
 
     candidates: list[tuple[str, bool]] = []  # (term, weak)
     for entry in entries:
         for words, shapes, initial in _runs(entry):
-            while words and (words[0].lower() in _LEADING_STOPWORDS
+            while words and (leading(words[0], shapes[0])
                              or (initial and shapes[0] == "cap" and ordinary(words[0]))):
                 words, shapes, initial = words[1:], shapes[1:], False
-            words_shapes = [(w, sh) for w, sh in zip(words, shapes) if w.lower() not in _CALENDAR]
+            words_shapes = [(w, sh) for w, sh in zip(words, shapes) if _key(w) not in calendar]
             while words_shapes:
                 chunk = words_shapes[:MAX_RUN]
                 weak = initial and len(chunk) == 1 and chunk[0][1] == "cap"
                 candidates.append((" ".join(w for w, _ in chunk), weak))
                 words_shapes, initial = words_shapes[MAX_RUN:], False
-    strong_keys = {term.lower() for term, weak in candidates if not weak}
+    strong_keys = {_key(term) for term, weak in candidates if not weak}
     counts: Counter = Counter()
     first: dict[str, int] = {}
     spelling: dict[str, str] = {}
     for index, (term, weak) in enumerate(candidates):
-        key = term.lower()
+        key = _key(term)
         if weak and key not in strong_keys:
             continue
         counts[key] += 1

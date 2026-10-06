@@ -23,6 +23,22 @@ MEMORY_MD = "\n§\n".join([
     "The repo lives at https://github.com/northwind/atlas and config in ~/work/atlas/.env",
 ])
 
+# The same kind of notes written in other languages (made-up names again), for ``languages``.
+NOTES_BY_LANGUAGE = {
+    "tr": ["Kullanıcı Northwind şirketinde çalışıyor. Neovim ve PostgreSQL kullanıyor.",
+           "Sonra Bartholomew mart ayında Project Atlas ekibine katıldı.",
+           "Ayrıca İstanbul'da yaşıyor. İşte Priya Raman onun takım lideri."],
+    "de": ["Der Nutzer arbeitet bei Northwind. Er nutzt Neovim und PostgreSQL.",
+           "Bevorzugt Python. Dann kam Bartholomew im März zum Projekt Atlas.",
+           "Seine Teamleiterin ist Priya Raman."],
+    "es": ["El usuario trabaja en Northwind. Usa Neovim y PostgreSQL.",
+           "Prefiere Python. Luego Bartholomew se unió al Proyecto Atlas en marzo.",
+           "Su jefa es Priya Raman."],
+    "fr": ["L'utilisateur travaille chez Northwind. Utilise Neovim et PostgreSQL.",
+           "Préfère Python. Ensuite Bartholomew a rejoint le Projet Atlas en mars.",
+           "Sa responsable est Priya Raman."],
+}
+
 
 def load_plugin():
     name = "stt_vocab_under_test"
